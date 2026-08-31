@@ -381,7 +381,7 @@ class BackfillShowAction @Inject constructor(
                       if (backfill.state == BackfillState.PAUSED) {
                         td("py-5 pl-8 pr-0 text-right align-top") {
                           a(
-                            href = EditPartitionCursorAction.path(id, partition.name),
+                            href = EditPartitionCursorAction.path(id, partition.id),
                             classes = "text-indigo-600 hover:text-indigo-900",
                           ) {
                             +"Edit Cursor"

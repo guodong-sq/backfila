@@ -201,21 +201,22 @@ public final class app/cash/backfila/dashboard/CreateBackfillAction : misk/web/a
 public final class app/cash/backfila/dashboard/EditPartitionCursorAction : misk/web/actions/WebAction {
 	public static final field Companion Lapp/cash/backfila/dashboard/EditPartitionCursorAction$Companion;
 	public fun <init> (Lapp/cash/backfila/dashboard/GetBackfillStatusAction;Lapp/cash/backfila/ui/components/DashboardPageLayout;)V
-	public final fun get (JLjava/lang/String;)Lmisk/web/Response;
+	public final fun get (JJ)Lmisk/web/Response;
 }
 
 public final class app/cash/backfila/dashboard/EditPartitionCursorAction$Companion {
-	public final fun path (JLjava/lang/String;)Ljava/lang/String;
+	public final fun path (JJ)Ljava/lang/String;
 }
 
 public final class app/cash/backfila/dashboard/EditPartitionCursorHandlerAction : misk/web/actions/WebAction {
 	public static final field Companion Lapp/cash/backfila/dashboard/EditPartitionCursorHandlerAction$Companion;
-	public fun <init> (Lapp/cash/backfila/dashboard/GetBackfillStatusAction;Lmisk/hibernate/Transacter;Lmisk/hibernate/Query$Factory;Lmisk/scope/ActionScoped;Lapp/cash/backfila/ui/components/DashboardPageLayout;)V
-	public final fun get (JLjava/lang/String;)Lmisk/web/Response;
+	public fun <init> (Lapp/cash/backfila/dashboard/GetBackfillStatusAction;Lmisk/hibernate/Transacter;Lmisk/hibernate/Query$Factory;Lapp/cash/backfila/ui/components/DashboardPageLayout;)V
+	public final fun get (JJLjava/lang/String;Ljava/lang/String;)Lmisk/web/Response;
+	public static synthetic fun get$default (Lapp/cash/backfila/dashboard/EditPartitionCursorHandlerAction;JJLjava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lmisk/web/Response;
 }
 
 public final class app/cash/backfila/dashboard/EditPartitionCursorHandlerAction$Companion {
-	public final fun path (JLjava/lang/String;)Ljava/lang/String;
+	public final fun path (JJ)Ljava/lang/String;
 }
 
 public final class app/cash/backfila/dashboard/GetBackfillRunsAction : misk/web/actions/WebAction {
@@ -1013,7 +1014,7 @@ public abstract interface class app/cash/backfila/service/persistence/RunPartiti
 	public abstract fun backfillRunIdIn (Ljava/util/Collection;)Lapp/cash/backfila/service/persistence/RunPartitionQuery;
 	public abstract fun leaseExpiresAtBefore (Ljava/time/Instant;)Lapp/cash/backfila/service/persistence/RunPartitionQuery;
 	public abstract fun orderByName ()Lapp/cash/backfila/service/persistence/RunPartitionQuery;
-	public abstract fun partitionId (J)Lapp/cash/backfila/service/persistence/RunPartitionQuery;
+	public abstract fun partitionId (Lmisk/hibernate/Id;)Lapp/cash/backfila/service/persistence/RunPartitionQuery;
 	public abstract fun runState (Lapp/cash/backfila/service/persistence/BackfillState;)Lapp/cash/backfila/service/persistence/RunPartitionQuery;
 }
 
