@@ -21,11 +21,11 @@ class BatchRangeIterator<K, Param : Any>(
 ) : AbstractIterator<GetNextBatchRangeResponse.Batch>() {
 
   private val timeElapsed: () -> Boolean
-  private var nextKeyRange: OpenKeyRange<K>
+  private var nextRange: NextRange<K>
   init {
     timeElapsed =
       if (request.compute_time_limit_ms == null) { { false } } else timer(request.compute_time_limit_ms)
-    nextKeyRange = OpenKeyRange.initialRangeFor(jooqBackfill, request, session)
+    nextRange = NextRange.WithinWindow(OpenKeyRange.initialRangeFor(jooqBackfill, request, session))
   }
 
   private fun timer(timeLimitMs: Long): () -> Boolean {
@@ -35,13 +35,21 @@ class BatchRangeIterator<K, Param : Any>(
 
   override fun computeNext(): GetNextBatchRangeResponse.Batch? {
     if (timeElapsed() || request.backfill_range.start == null) return endOfData()
-    val keyRange = nextKeyRange
+    val keyRange = when (val next = nextRange) {
+      is NextRange.WithinWindow -> next.range
+      is NextRange.NeedsNewWindow ->
+        OpenKeyRange.nextRangeFor(jooqBackfill, request, session, next.previousEnd)
+    }
     val keyValues = selectKeyValues(keyRange)
-    val start = keyRange.determineStart(keyValues)
-    val end = keyRange.determineEnd(keyValues)
+    val end = keyRange.determineEnd(keyValues, request)
     val scannedCount = determineScannedCount(keyRange, end)
     if (scannedCount == 0) return endOfData()
-    nextKeyRange = keyRange.nextRangeFor(end)
+    val start = keyRange.determineStart(session)
+    nextRange = if (keyRange.endsAtUpperBound(end)) {
+      NextRange.NeedsNewWindow(end)
+    } else {
+      NextRange.WithinWindow(keyRange.nextRangeFor(end))
+    }
     return GetNextBatchRangeResponse.Batch.Builder()
       .batch_range(jooqBackfill.buildKeyRange(start, end))
       .scanned_record_count(scannedCount.toLong())
@@ -73,4 +81,10 @@ class BatchRangeIterator<K, Param : Any>(
       ?.value1()
       ?: throw IllegalStateException("A SQL count will always return back a row")
   }
+}
+
+private sealed interface NextRange<K> {
+  class WithinWindow<K>(val range: OpenKeyRange<K>) : NextRange<K>
+
+  class NeedsNewWindow<K>(val previousEnd: K) : NextRange<K>
 }

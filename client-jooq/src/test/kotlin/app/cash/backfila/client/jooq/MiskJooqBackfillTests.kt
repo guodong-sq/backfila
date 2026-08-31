@@ -1,10 +1,14 @@
 package app.cash.backfila.client.jooq
 
 import app.cash.backfila.client.jooq.config.ClientJooqTestingModule
+import app.cash.backfila.client.jooq.config.CompoundKey
 import app.cash.backfila.client.jooq.config.IdRecorder
 import app.cash.backfila.client.jooq.config.JooqDBIdentifier
 import app.cash.backfila.client.jooq.config.JooqMenuTestBackfill
 import app.cash.backfila.client.jooq.config.JooqTransacter
+import app.cash.backfila.client.jooq.config.JooqWidgetCompoundKeyBackfill
+import app.cash.backfila.client.jooq.gen.tables.references.MENU
+import app.cash.backfila.client.jooq.gen.tables.references.WIDGETS
 import app.cash.backfila.client.testing.assertThat as testingAssertThat
 import app.cash.backfila.embedded.Backfila
 import app.cash.backfila.embedded.BackfillRun
@@ -189,6 +193,104 @@ class MiskJooqBackfillTests {
     testingAssertThat(run).isComplete()
     assertThat(run.backfill.idsRanDry).containsExactlyElementsOf(backfillRowKeys)
     assertThat(run.backfill.idsRanWet).isEmpty()
+  }
+
+  @Test
+  fun sparseMatchesStayWithinRawScanWindows() {
+    val matchingPositions = listOf(0, 1, 8, 11)
+    val rawKeys = transacter.transaction("sparseMatchesStayWithinRawScanWindows") { session ->
+      (0 until 12).map { position ->
+        session.newRecord(MENU)
+          .apply {
+            name = if (position in matchingPositions) "chicken" else "beef"
+          }.let {
+            it.store()
+            it.id!!
+          }
+      }
+    }
+    val expectedMatchingKeys = matchingPositions.map(rawKeys::get)
+    val run = backfila.createDryRun(
+      JooqMenuTestBackfill::class,
+      emptyMap(),
+      null,
+      null,
+    ).apply {
+      batchSize = 2
+      scanSize = 4
+      computeCountLimit = 10
+    }
+
+    val batches = run.singleScan().batches
+
+    assertThat(batches).hasSize(4)
+    assertThat(batches).allMatch { it.scanned_record_count <= run.scanSize }
+    // Batches: [0..1] full match, [2..3] empty tail, [4..7] empty window, and
+    // [8..11] sparse full match.
+    assertThat(batches.map { it.scanned_record_count }).containsExactly(2L, 2L, 4L, 4L)
+    assertThat(batches.map { it.matching_record_count }).containsExactly(2L, 0L, 0L, 2L)
+    // The first window's empty tail starts after the preceding matching batch.
+    assertThat(batches[1].batch_range.start.utf8()).isEqualTo(rawKeys[2].toString())
+    assertThat(batches[1].batch_range.end.utf8()).isEqualTo(rawKeys[3].toString())
+    // The entirely empty second window still advances the raw cursor.
+    assertThat(batches[2].batch_range.start.utf8()).isEqualTo(rawKeys[4].toString())
+    assertThat(batches[2].batch_range.end.utf8()).isEqualTo(rawKeys[7].toString())
+
+    run.scanRemaining()
+    run.runAllScanned()
+
+    assertThat(run.backfill.idsRanDry).containsExactlyElementsOf(expectedMatchingKeys)
+  }
+
+  @Test
+  fun compoundKeySparseMatchesStayWithinRawScanWindows() {
+    val matchingPositions = listOf(0, 1, 8, 9, 10, 11)
+    val rawKeys = transacter.transaction("compoundKeySparseMatchesStayWithinRawScanWindows") { session ->
+      (0 until 12).map { position ->
+        session.newRecord(WIDGETS)
+          .apply {
+            name = if (position in matchingPositions) "chicken" else "beef"
+            manufacturerToken = when (position) {
+              in 0..1 -> "token1 - select for backfill"
+              in 2..7 -> "token2 - not select for backfill"
+              else -> "token3 - select for backfill"
+            }
+            createdAtMs = clock.instant().toEpochMilli() + position / 2
+            widgetToken = "widget-${position.toString().padStart(2, '0')}".encodeToByteArray()
+          }.let {
+            it.store()
+            CompoundKey.recordToKey(it)
+          }
+      }
+    }
+    val expectedMatchingKeys = matchingPositions.map(rawKeys::get)
+    val run = backfila.createDryRun(
+      JooqWidgetCompoundKeyBackfill::class,
+      emptyMap(),
+      null,
+      null,
+    ).apply {
+      batchSize = 2
+      scanSize = 4
+      computeCountLimit = 10
+    }
+
+    val batches = run.singleScan().batches
+
+    assertThat(batches).hasSize(5)
+    assertThat(batches).allMatch { it.scanned_record_count <= run.scanSize }
+    assertThat(batches.map { it.scanned_record_count }).containsExactly(2L, 2L, 4L, 2L, 2L)
+    assertThat(batches.map { it.matching_record_count }).containsExactly(2L, 0L, 0L, 2L, 2L)
+    assertThat(batches[1].batch_range.start.utf8()).isEqualTo(rawKeys[2].toString())
+    assertThat(batches[1].batch_range.end.utf8()).isEqualTo(rawKeys[3].toString())
+    assertThat(batches[2].batch_range.start.utf8()).isEqualTo(rawKeys[4].toString())
+    assertThat(batches[2].batch_range.end.utf8()).isEqualTo(rawKeys[7].toString())
+    assertThat(batches.last().batch_range.end.utf8()).isEqualTo(rawKeys[11].toString())
+
+    run.scanRemaining()
+    run.runAllScanned()
+
+    assertThat(run.backfill.idsRanDry).containsExactlyElementsOf(expectedMatchingKeys)
   }
 
   @ParameterizedTest(name = "precomputingIgnoresBatchSize test - {0}")
