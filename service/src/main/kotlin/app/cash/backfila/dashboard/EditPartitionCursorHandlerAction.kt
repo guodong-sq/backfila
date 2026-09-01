@@ -10,14 +10,14 @@ import jakarta.inject.Inject
 import jakarta.inject.Singleton
 import kotlinx.html.div
 import misk.exceptions.BadRequestException
+import misk.hibernate.Id
 import misk.hibernate.Query
 import misk.hibernate.Transacter
 import misk.hibernate.newQuery
-import misk.scope.ActionScoped
 import misk.security.authz.Authenticated
 import misk.web.Get
-import misk.web.HttpCall
 import misk.web.PathParam
+import misk.web.QueryParam
 import misk.web.Response
 import misk.web.ResponseBody
 import misk.web.ResponseContentType
@@ -32,7 +32,6 @@ class EditPartitionCursorHandlerAction @Inject constructor(
   private val getBackfillStatusAction: GetBackfillStatusAction,
   @BackfilaDb private val transacter: Transacter,
   private val queryFactory: Query.Factory,
-  private val httpCall: ActionScoped<HttpCall>,
   private val dashboardPageLayout: DashboardPageLayout,
 ) : WebAction {
 
@@ -41,35 +40,31 @@ class EditPartitionCursorHandlerAction @Inject constructor(
   @Authenticated(capabilities = ["users"])
   fun get(
     @PathParam id: Long,
-    @PathParam partitionName: String,
+    @PathParam partitionId: Long,
+    @QueryParam cursor_snapshot: String? = null,
+    @QueryParam new_cursor: String? = null,
   ): Response<ResponseBody> {
-    val request = httpCall.get().asOkHttpRequest()
-    val cursorSnapshot = request.url.queryParameter("cursor_snapshot")?.takeIf { it.isNotBlank() }
-    val newCursor = request.url.queryParameter("new_cursor")
-
-    if (!isValidUtf8(newCursor)) {
-      return buildErrorResponse("New cursor must be valid UTF8. New Cursor: $newCursor")
-    }
+    val cursorSnapshot = cursor_snapshot?.takeIf { it.isNotBlank() }
+    val newCursor = new_cursor?.takeIf { it.isNotBlank() }
+      ?: return buildErrorResponse("New cursor is required.")
 
     val backfill = getBackfillStatusAction.status(id)
     if (backfill.state != BackfillState.PAUSED) {
       return buildErrorResponse("Backfill must be paused. Current State: ${backfill.state}")
     }
 
-    val partition = backfill.partitions.find { it.name == partitionName }
-      ?: return buildErrorResponse("Partition not found: $partitionName")
+    val partition = backfill.partitions.find { it.id == partitionId }
+      ?: return buildErrorResponse("Partition $partitionId not found in backfill $id")
 
-    if (partition.pkey_cursor != cursorSnapshot) {
-      return buildErrorResponse("Cursor has changed since edit form was loaded. Current Cursor: ${partition.pkey_cursor}")
+    return when (compareAndSetCursor(id, partitionId, cursorSnapshot, newCursor)) {
+      CursorUpdate.UPDATED -> redirectToBackfillPage(id)
+      CursorUpdate.CURSOR_NOT_UTF8 -> buildErrorResponse(
+        "Partition ${partition.name} has a cursor that is not valid UTF-8, so it cannot be edited here.",
+      )
+      CursorUpdate.SNAPSHOT_STALE -> buildErrorResponse(
+        "Cursor has changed since edit form was loaded. Current Cursor: ${partition.pkey_cursor}",
+      )
     }
-
-    updateCursor(partition.id, newCursor)
-
-    return redirectToBackfillPage(id)
-  }
-
-  private fun isValidUtf8(input: String?): Boolean {
-    return input == null || input.toByteArray(Charsets.UTF_8).contentEquals(input.toByteArray(Charsets.UTF_8))
   }
 
   private fun buildErrorResponse(message: String): Response<ResponseBody> {
@@ -86,17 +81,31 @@ class EditPartitionCursorHandlerAction @Inject constructor(
     )
   }
 
-  private fun updateCursor(partitionId: Long, newCursor: String?) {
-    transacter.transaction { session ->
-      queryFactory.newQuery<RunPartitionQuery>()
-        .partitionId(partitionId)
-        .uniqueResult(session)
-        ?.let { partitionRecord ->
-          partitionRecord.pkey_cursor = newCursor?.encodeUtf8()
-          session.save(partitionRecord)
-        } ?: throw BadRequestException("Partition not found")
+  /** The form round-trips the snapshot through `utf8()`, so bytes that are not UTF-8 cannot be compared. */
+  private fun compareAndSetCursor(
+    id: Long,
+    partitionId: Long,
+    cursorSnapshot: String?,
+    newCursor: String,
+  ): CursorUpdate = transacter.transaction { session ->
+    val partitionRecord = queryFactory.newQuery<RunPartitionQuery>()
+      .backfillRunId(Id(id))
+      .partitionId(Id(partitionId))
+      .uniqueResult(session)
+      ?: throw BadRequestException("Partition $partitionId not found in backfill $id")
+
+    val storedCursor = partitionRecord.pkey_cursor
+    if (storedCursor != null && storedCursor.utf8().encodeUtf8() != storedCursor) {
+      return@transaction CursorUpdate.CURSOR_NOT_UTF8
     }
+    if (storedCursor != cursorSnapshot?.encodeUtf8()) {
+      return@transaction CursorUpdate.SNAPSHOT_STALE
+    }
+    partitionRecord.pkey_cursor = newCursor.encodeUtf8()
+    CursorUpdate.UPDATED
   }
+
+  private enum class CursorUpdate { UPDATED, SNAPSHOT_STALE, CURSOR_NOT_UTF8 }
 
   private fun redirectToBackfillPage(id: Long): Response<ResponseBody> {
     return Response(
@@ -107,10 +116,10 @@ class EditPartitionCursorHandlerAction @Inject constructor(
   }
 
   companion object {
-    private const val PATH = "/backfills/{id}/{partitionName}/edit-cursor"
+    private const val PATH = "/api/backfill/{id}/partitions/{partitionId}/cursor"
 
-    fun path(id: Long, partitionName: String) = PATH
+    fun path(id: Long, partitionId: Long) = PATH
       .replace("{id}", id.toString())
-      .replace("{partitionName}", partitionName)
+      .replace("{partitionId}", partitionId.toString())
   }
 }

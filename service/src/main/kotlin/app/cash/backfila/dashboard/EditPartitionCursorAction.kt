@@ -15,6 +15,7 @@ import kotlinx.html.h1
 import kotlinx.html.input
 import kotlinx.html.label
 import kotlinx.html.p
+import misk.exceptions.BadRequestException
 import misk.security.authz.Authenticated
 import misk.tailwind.Link
 import misk.web.Get
@@ -36,14 +37,14 @@ class EditPartitionCursorAction @Inject constructor(
   @Authenticated(capabilities = ["users"])
   fun get(
     @PathParam id: Long,
-    @PathParam partitionName: String,
+    @PathParam partitionId: Long,
   ): Response<ResponseBody> {
     val backfill = getBackfillStatusAction.status(id)
 
-    val partition = backfill.partitions.find { it.name == partitionName }
-      ?: throw IllegalArgumentException("Partition not found")
+    val partition = backfill.partitions.find { it.id == partitionId }
+      ?: throw BadRequestException("Partition $partitionId not found in backfill $id")
 
-    // Take a snapshot of current cursor for validation
+    val partitionName = partition.name
     val cursorSnapshot = partition.pkey_cursor
 
     return Response(
@@ -51,7 +52,7 @@ class EditPartitionCursorAction @Inject constructor(
         .title("Edit Cursor - Partition $partitionName")
         .breadcrumbLinks(
           Link("Backfill #$id", BackfillShowAction.path(id)),
-          Link("Edit Cursor", path(id, partitionName)),
+          Link("Edit Cursor", path(id, partitionId)),
         )
         .buildHtmlResponseBody {
           div("space-y-6 max-w-2xl mx-auto py-8") {
@@ -82,7 +83,7 @@ class EditPartitionCursorAction @Inject constructor(
 
             form {
               method = FormMethod.get
-              action = EditPartitionCursorHandlerAction.path(id, partitionName)
+              action = EditPartitionCursorHandlerAction.path(id, partitionId)
 
               input {
                 type = InputType.hidden
@@ -121,7 +122,7 @@ class EditPartitionCursorAction @Inject constructor(
                     }
                   }
                   p("mt-2 text-sm text-gray-500") {
-                    +"Enter the new cursor value. This must be a valid UTF-8 string."
+                    +"Enter the new cursor value. It cannot be empty."
                   }
                 }
 
@@ -142,9 +143,9 @@ class EditPartitionCursorAction @Inject constructor(
   }
 
   companion object {
-    private const val PATH = "/backfills/{id}/{partitions}/{partitionName}/edit-cursor"
-    fun path(id: Long, partitionName: String) = PATH
+    private const val PATH = "/backfills/{id}/partitions/{partitionId}/edit-cursor"
+    fun path(id: Long, partitionId: Long) = PATH
       .replace("{id}", id.toString())
-      .replace("{partitionName}", partitionName)
+      .replace("{partitionId}", partitionId.toString())
   }
 }

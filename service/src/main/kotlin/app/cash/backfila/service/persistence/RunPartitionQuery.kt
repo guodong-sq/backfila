@@ -24,5 +24,5 @@ interface RunPartitionQuery : Query<DbRunPartition> {
   fun orderByName(): RunPartitionQuery
 
   @Constraint("id", Operator.EQ)
-  fun partitionId(partitionId: Long): RunPartitionQuery
+  fun partitionId(partitionId: Id<DbRunPartition>): RunPartitionQuery
 }
